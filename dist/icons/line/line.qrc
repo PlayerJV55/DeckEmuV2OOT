@@ -1,0 +1,83 @@
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+<RCC>
+  <qresource prefix="line_icons">
+    <file>adjustments-horizontal.svg</file>
+    <file>apps.svg</file>
+    <file>aspect-ratio.svg</file>
+    <file>book.svg</file>
+    <file>bug.svg</file>
+    <file>camera.svg</file>
+    <file>circle-plus.svg</file>
+    <file>clear-all.svg</file>
+    <file>clock.svg</file>
+    <file>copy.svg</file>
+    <file>cpu.svg</file>
+    <file>cpu-2.svg</file>
+    <file>database.svg</file>
+    <file>database-cog.svg</file>
+    <file>device-desktop.svg</file>
+    <file>device-floppy.svg</file>
+    <file>device-gamepad-2.svg</file>
+    <file>device-nintendo.svg</file>
+    <file>device-sd-card.svg</file>
+    <file>door-exit.svg</file>
+    <file>download.svg</file>
+    <file>eraser.svg</file>
+    <file>file.svg</file>
+    <file>file-export.svg</file>
+    <file>file-text.svg</file>
+    <file>file-zip.svg</file>
+    <file>folder.svg</file>
+    <file>folder-minus.svg</file>
+    <file>folder-open.svg</file>
+    <file>folder-plus.svg</file>
+    <file>folders.svg</file>
+    <file>history.svg</file>
+    <file>home.svg</file>
+    <file>id-badge-2.svg</file>
+    <file>info-circle.svg</file>
+    <file>key.svg</file>
+    <file>keyboard.svg</file>
+    <file>layout-grid.svg</file>
+    <file>layout-list.svg</file>
+    <file>library-photo.svg</file>
+    <file>link.svg</file>
+    <file>logout.svg</file>
+    <file>mood-smile.svg</file>
+    <file>network.svg</file>
+    <file>nfc.svg</file>
+    <file>package.svg</file>
+    <file>packages.svg</file>
+    <file>pencil.svg</file>
+    <file>photo.svg</file>
+    <file>pin.svg</file>
+    <file>player-pause.svg</file>
+    <file>player-play.svg</file>
+    <file>player-record.svg</file>
+    <file>player-skip-back.svg</file>
+    <file>player-stop.svg</file>
+    <file>plug-connected.svg</file>
+    <file>puzzle.svg</file>
+    <file>refresh.svg</file>
+    <file>resize.svg</file>
+    <file>restore.svg</file>
+    <file>script.svg</file>
+    <file>settings.svg</file>
+    <file>settings-off.svg</file>
+    <file>shield-check.svg</file>
+    <file>stack-2.svg</file>
+    <file>star-off.svg</file>
+    <file>trash.svg</file>
+    <file>usb.svg</file>
+    <file>users.svg</file>
+    <file>volume.svg</file>
+    <file>wand.svg</file>
+    <file>world.svg</file>
+    <file>world-cog.svg</file>
+    <file>world-download.svg</file>
+  </qresource>
+</RCC>

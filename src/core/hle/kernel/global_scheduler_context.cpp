@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <cstdlib>
+#include <mutex>
+#include <ranges>
+
+#include "common/assert.h"
+#include "core/core.h"
+#include "core/hle/kernel/global_scheduler_context.h"
+#include "core/hle/kernel/k_scheduler.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/physical_core.h"
+
+namespace Kernel {
+
+namespace {
+
+// The host threads of dummy threads made runnable (host service threads waiting for a request)
+// are notified after the scheduler lock is released, so that each wake-up system call is no
+// longer paid while every core waits for the lock. EDEN_NX2_DUMMY_WAKE_UNLOCKED=0 notifies them
+// under the lock as before.
+bool NotifyDummyThreadsUnlocked() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_DUMMY_WAKE_UNLOCKED");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
+} // Anonymous namespace
+
+GlobalSchedulerContext::GlobalSchedulerContext(KernelCore& kernel)
+    : m_scheduler_lock{kernel}
+{}
+
+GlobalSchedulerContext::~GlobalSchedulerContext() = default;
+
+/// @brief Adds a new thread to the scheduler
+void GlobalSchedulerContext::AddThread(KThread* thread) noexcept {
+    std::scoped_lock lock{m_global_list_guard};
+    m_thread_list.push_back(thread);
+}
+
+/// @brief Removes a thread from the scheduler
+void GlobalSchedulerContext::RemoveThread(KThread* thread) noexcept {
+    std::scoped_lock lock{m_global_list_guard};
+    m_thread_list.erase(std::ranges::find(m_thread_list, thread));
+}
+
+/// @brief Rotates the scheduling queues of threads at a preemption priority
+///  and then does some core rebalancing. Preemption priorities can be found
+/// in the array 'preemption_priorities'.
+/// @note This operation happens every 10ms.
+void GlobalSchedulerContext::PreemptThreads(KernelCore& kernel) noexcept {
+    // The priority levels at which the global scheduler preempts threads every 10 ms. They are
+    // ordered from Core 0 to Core 5; core 3 is shared with the system, 4 and 5 are application
+    // cores like 0..2.
+    static constexpr std::array<u32, Core::Hardware::NUM_CPU_CORES> per_core{
+        59,
+        59,
+        59,
+        63,
+        59,
+        59,
+    };
+    ASSERT(KScheduler::IsSchedulerLockedByCurrentThread(kernel));
+    for (u32 core_id = 0; core_id < per_core.size(); core_id++)
+        KScheduler::RotateScheduledQueue(kernel, core_id, per_core[core_id]);
+}
+
+/// @brief Returns true if the global scheduler lock is acquired
+bool GlobalSchedulerContext::IsLocked() const noexcept {
+    return m_scheduler_lock.IsLockedByCurrentThread();
+}
+
+void GlobalSchedulerContext::RegisterDummyThreadForWakeup(KThread* thread) noexcept {
+    ASSERT(this->IsLocked());
+    m_woken_dummy_threads.push_back(thread);
+}
+
+void GlobalSchedulerContext::UnregisterDummyThreadForWakeup(KThread* thread) noexcept {
+    ASSERT(this->IsLocked());
+    if(auto it = std::ranges::find(m_woken_dummy_threads, thread); it != m_woken_dummy_threads.end()) {
+        *it = m_woken_dummy_threads.back();
+        m_woken_dummy_threads.pop_back();
+    }
+}
+
+void GlobalSchedulerContext::WakeupWaitingDummyThreads(KernelCore& kernel) noexcept {
+    ASSERT(this->IsLocked());
+    if (m_woken_dummy_threads.empty()) {
+        return;
+    }
+    if (!NotifyDummyThreadsUnlocked()) {
+        for (auto* thread : m_woken_dummy_threads)
+            thread->DummyThreadEndWait(kernel);
+        m_woken_dummy_threads.clear();
+        return;
+    }
+    // Marked runnable here, under the lock; the lock's Unlock notifies their host threads once it
+    // is released (TakeWokenDummyThreads).
+    for (KThread* const thread : m_woken_dummy_threads) {
+        thread->DummyThreadMarkRunnable(kernel);
+    }
+    m_dummy_threads_to_notify.insert(m_dummy_threads_to_notify.end(),
+                                     m_woken_dummy_threads.begin(), m_woken_dummy_threads.end());
+    m_woken_dummy_threads.clear();
+}
+
+void GlobalSchedulerContext::TakeWokenDummyThreads(KWokenDummyThreads& out) noexcept {
+    ASSERT(this->IsLocked());
+    if (m_dummy_threads_to_notify.empty()) {
+        return;
+    }
+    out.assign(m_dummy_threads_to_notify.begin(), m_dummy_threads_to_notify.end());
+    m_dummy_threads_to_notify.clear();
+}
+
+} // namespace Kernel

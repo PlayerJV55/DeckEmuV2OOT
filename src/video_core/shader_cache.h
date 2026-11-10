@@ -1,0 +1,242 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <span>
+#include "common/container/unordered_map.h"
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "common/common_types.h"
+#include "video_core/page_filter.h"
+#include <ranges>
+#include "video_core/control/channel_state_cache.h"
+#include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/rasterizer_interface.h"
+#include "video_core/shader_environment.h"
+
+namespace Tegra {
+class MemoryManager;
+}
+
+namespace Tegra::Control {
+struct ChannelState;
+}
+
+namespace VideoCommon {
+
+class GenericEnvironment;
+
+struct ShaderInfo {
+    u64 unique_hash{};
+    size_t size_bytes{};
+    /// Lowered code of a native program, reused when its pipelines are built.
+    std::shared_ptr<const LoweredNativeCode> lowered_native;
+};
+
+class ShaderCache : public VideoCommon::ChannelSetupCaches<VideoCommon::ChannelInfo> {
+    static constexpr u64 YUZU_PAGEBITS = 14;
+    static constexpr u64 YUZU_PAGESIZE = u64(1) << YUZU_PAGEBITS;
+
+    static constexpr size_t NUM_PROGRAMS = 6;
+
+    struct Entry {
+        VAddr addr_start;
+        VAddr addr_end;
+        ShaderInfo* data;
+
+        bool is_memory_marked = true;
+
+        bool Overlaps(VAddr start, VAddr end) const noexcept {
+            return start < addr_end && addr_start < end;
+        }
+    };
+
+public:
+    /// Device pages this cache ever registered shaders on (InnerInvalidation skips the rest).
+    VideoCommon::PageFilter page_filter;
+
+    /// @brief Removes shaders inside a given region
+    /// @note Checks for ranges
+    /// @param addr Start address of the invalidation
+    /// @param size Number of bytes of the invalidation
+    void InvalidateRegion(VAddr addr, size_t size);
+
+    /// @brief InvalidateRegion for every range, under one lock and with one removal pass
+    void InvalidateRegions(std::span<const std::pair<DAddr, size_t>> sequences);
+
+    /// @brief Unmarks a memory region as cached and marks it for removal
+    /// @param addr Start address of the CPU write operation
+    /// @param size Number of bytes of the CPU write operation
+    void OnCacheInvalidation(VAddr addr, size_t size);
+
+    /// @brief Flushes delayed removal operations
+    void SyncGuestHost();
+
+    /// EDEN_NX2_INLINE_INVALIDATE: changes whenever a shader or a rejected program is remembered.
+    [[nodiscard]] u64 PageSerial() const noexcept {
+        return page_serial.load(std::memory_order_acquire);
+    }
+
+    /// The page serial when no shader or rejected program is in [addr, addr + size), else 0.
+    [[nodiscard]] u64 CleanSerial(VAddr addr, size_t size);
+
+    /// Whether invalidated shaders wait for RemovePendingShaders.
+    [[nodiscard]] bool HasPendingRemovals() const noexcept {
+        return removal_pending.load(std::memory_order_acquire);
+    }
+
+protected:
+    struct GraphicsEnvironments {
+        std::array<GraphicsEnvironment, NUM_PROGRAMS> envs;
+        std::array<Shader::Environment*, NUM_PROGRAMS> env_ptrs{};
+
+        std::span<Shader::Environment* const> Span() const noexcept {
+            return std::span(env_ptrs.begin(), std::ranges::find(env_ptrs, nullptr));
+        }
+    };
+
+    explicit ShaderCache(Tegra::MaxwellDeviceMemoryManager& device_memory);
+
+    /// @brief Update the hashes and information of shader stages
+    /// @param unique_hashes Shader hashes to store into when a stage is enabled
+    /// @return True no success, false on error
+    bool RefreshStages(std::array<u64, NUM_PROGRAMS>& unique_hashes);
+
+    /// @brief Returns information about the current compute shader
+    /// @return Pointer to a valid shader, nullptr on error
+    const ShaderInfo* ComputeShader();
+
+    /// @brief Collect the current graphics environments
+    void GetGraphicsEnvironments(GraphicsEnvironments& result,
+                                 const std::array<u64, NUM_PROGRAMS>& unique_hashes);
+
+    /// EDEN_NX2_GPU_PROFILE: a program of a pipeline in the disk cache, so that its lowering at
+    /// first bind is told apart from that of a program no session met before
+    void NoteCachedProgram(u64 unique_hash);
+
+    std::array<const ShaderInfo*, NUM_PROGRAMS> shader_infos{};
+    bool last_shaders_valid = false;
+    /// EDEN_NX2_REJECT_RECHECK_GPU: when a draw with failed stages may look at them again.
+    std::chrono::steady_clock::time_point next_failed_stage_retry{};
+
+private:
+    /// @brief Tries to obtain a cached shader starting in a given address
+    /// @note Doesn't check for ranges, the given address has to be the start of the shader
+    /// @param addr Start address of the shader, this doesn't cache for region
+    /// @return Pointer to a valid shader, nullptr when nothing is found
+    ShaderInfo* TryGet(VAddr addr) const;
+
+    /// @brief Register in the cache a given entry
+    /// @param data Shader to store in the cache
+    /// @param addr Start address of the shader that will be registered
+    /// @param size Size in bytes of the shader
+    void Register(std::unique_ptr<ShaderInfo> data, VAddr addr, size_t size);
+
+    /// @brief Invalidate pages in a given region
+    /// @pre invalidation_mutex is locked
+    void InvalidatePagesInRegion(VAddr addr, size_t size);
+
+    /// @brief Remove shaders marked for deletion
+    /// @pre invalidation_mutex is locked
+    void RemovePendingShaders();
+
+    /// Drop invalidated bindings and reclaim retired metadata on the renderer thread.
+    void ReclaimInvalidatedShaders();
+
+    /// @brief Invalidates entries in a given range for the passed page
+    /// @param entries         Vector of entries in the page, it will be modified on overlaps
+    /// @param addr            Start address of the invalidation
+    /// @param addr_end        Non-inclusive end address of the invalidation
+    /// @pre invalidation_mutex is locked
+    void InvalidatePageEntries(std::vector<Entry*>& entries, VAddr addr, VAddr addr_end);
+
+    /// @brief Removes all references to an entry in the invalidation cache
+    /// @param entry Entry to remove from the invalidation cache
+    /// @pre invalidation_mutex is locked
+    void RemoveEntryFromInvalidationCache(const Entry* entry);
+
+    /// @brief Unmarks an entry from the rasterizer cache
+    /// @param entry Entry to unmark from memory
+    void UnmarkMemory(Entry* entry);
+
+    /// @brief Creates a new entry in the lookup cache and returns its pointer
+    /// @pre lookup_mutex is locked
+    Entry* NewEntry(VAddr addr, VAddr addr_end, ShaderInfo* data);
+
+    /// @brief Create a new shader entry and register it
+    const ShaderInfo* MakeShaderInfo(GenericEnvironment& env, VAddr cpu_addr);
+
+    /// EDEN_NX2_GPU_PROFILE: counts the time a new environment spent lowering its native program
+    /// on this thread, and logs the totals every 10 s
+    void NoteNativeLowering(const GenericEnvironment& env, u64 unique_hash);
+
+    /// Rethrows the error a native program at this address was rejected with, if any.
+    void RethrowIfRejected(VAddr addr);
+    /// Whether a native program at this address was rejected.
+    bool IsRejected(VAddr addr);
+    /// Remembers the exception being handled as this address's rejection.
+    void RememberRejection(VAddr addr, GPUVAddr gpu_addr);
+    /// Drops a rejection whose program bytes changed since it was made (see the .cpp).
+    bool RecheckRejection(VAddr addr);
+    /// Hash of the state task and mesh programs are translated with.
+    u64 MeshStateHash() const;
+
+    Tegra::MaxwellDeviceMemoryManager& device_memory;
+
+    mutable std::mutex lookup_mutex;
+    std::mutex invalidation_mutex;
+
+    ::Common::unordered_map<u64, std::unique_ptr<Entry>> lookup_cache;
+    ::Common::unordered_map<u64, std::vector<Entry*>> invalidation_cache;
+    std::vector<std::unique_ptr<ShaderInfo>> storage;
+    std::vector<Entry*> marked_for_removal;
+    // Invalidation can run on a CPU thread while a renderer lookup still uses a ShaderInfo.
+    // Keep removed objects alive until the next renderer lookup has dropped its old bindings.
+    std::vector<std::unique_ptr<ShaderInfo>> retired_shaders;
+    std::atomic<u64> invalidation_generation{};
+    u64 observed_invalidation_generation{}; // renderer thread only
+
+    /// Native programs the lowering rejected, by address, so each draw or dispatch rethrows the
+    /// first error instead of lowering again; dropped when guest memory there is written.
+    std::mutex rejected_mutex;
+    struct Rejection {
+        std::exception_ptr error;
+        GPUVAddr gpu_addr{};
+        std::vector<u8> bytes;
+        std::chrono::steady_clock::time_point made;
+        std::chrono::steady_clock::time_point checked;
+    };
+    ::Common::unordered_map<u64, Rejection> rejected_native;
+    /// Bounds of every address ever rejected (never shrinks): a quick test for invalidations.
+    std::atomic<VAddr> rejected_lowest{~VAddr{}};
+    std::atomic<VAddr> rejected_highest{};
+    std::atomic<u64> page_serial{1};
+    std::atomic<bool> removal_pending{};
+
+    std::mutex cached_programs_mutex;
+    std::unordered_set<u64> cached_programs; ///< NoteCachedProgram
+    struct NativeLoweringStats {
+        u64 window_start{};
+        u32 programs{};
+        u32 cached{}; ///< Of programs: in the disk cache
+        u32 from_records{}; ///< Of programs: lowered ahead from native program records
+        u64 capture_ns{};
+        u64 lower_ns{};
+        u64 cached_lower_ns{};
+        u64 longest_ns{};
+    } native_lowering; ///< GPU thread only
+};
+
+} // namespace VideoCommon

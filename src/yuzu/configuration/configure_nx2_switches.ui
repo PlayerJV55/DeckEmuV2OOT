@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ConfigureNx2Switches</class>
+ <widget class="QWidget" name="ConfigureNx2Switches">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <property name="accessibleName">
+   <string>Advanced Switches</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QHBoxLayout" name="profile_layout">
+     <item>
+      <widget class="QLabel" name="profile_label">
+       <property name="text">
+        <string>Edit:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="profile_combo">
+       <property name="sizeAdjustPolicy">
+        <enum>QComboBox::SizeAdjustPolicy::AdjustToContents</enum>
+       </property>
+       <property name="toolTip">
+        <string>The global switches apply to every game. A profile changes only the switches ticked in it, for the games set to use it in their Properties.</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="new_profile_button">
+       <property name="text">
+        <string>New Profile...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="rename_profile_button">
+       <property name="text">
+        <string>Rename...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="delete_profile_button">
+       <property name="text">
+        <string>Delete</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="profile_spacer">
+       <property name="orientation">
+        <enum>Qt::Orientation::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="intro_label">
+     <property name="text">
+      <string>Environment switches that change how the emulator works inside. They are for testing and troubleshooting: most players should leave them alone. Hover a row to see what it does. Ticked rows are written to the switch file below; changes apply after restarting Nemyu.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="file_label">
+     <property name="textInteractionFlags">
+      <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="filter_layout">
+     <item>
+      <widget class="QLineEdit" name="search_edit">
+       <property name="placeholderText">
+        <string>Search names and descriptions</string>
+       </property>
+       <property name="clearButtonEnabled">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="category_combo"/>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="overridden_only">
+       <property name="text">
+        <string>Ticked only</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="table">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>320</height>
+      </size>
+     </property>
+     <property name="editTriggers">
+      <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+     </property>
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+     </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+     </property>
+     <property name="wordWrap">
+      <bool>false</bool>
+     </property>
+     <attribute name="verticalHeaderVisible">
+      <bool>false</bool>
+     </attribute>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="button_layout">
+     <item>
+      <widget class="QPushButton" name="import_button">
+       <property name="text">
+        <string>Import...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="export_button">
+       <property name="text">
+        <string>Export...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="reset_button">
+       <property name="text">
+        <string>Reset All</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="button_spacer">
+       <property name="orientation">
+        <enum>Qt::Orientation::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QLabel" name="restart_label">
+       <property name="text">
+        <string>Changes apply after restarting Nemyu.</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,153 @@
+name: Build AppImage Linux (Steam Deck)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux-appimage:
+    name: Build Linux AppImage (x86-64-v3 / AVX2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake binutils build-essential ca-certificates ccache curl file git \
+            glslang-tools libasound2-dev libavcodec-dev libavfilter-dev libavutil-dev \
+            libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev libhidapi-dev \
+            libopengl0 libopus-dev libpulse-dev libssl-dev libswresample-dev libswscale-dev \
+            libtool libudev-dev libusb-1.0-0-dev libva-dev libvdpau-dev libvulkan-dev \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxext-dev \
+            libxkbcommon-dev libxkbcommon-x11-0 mesa-common-dev nasm patch pkg-config python3 python3-venv \
+            squashfs-tools xdg-utils zlib1g-dev
+
+      - name: Setup Python environment and CMake/Ninja
+        run: |
+          python3 -m venv "$GITHUB_WORKSPACE/.cache/linux-ci-python"
+          source "$GITHUB_WORKSPACE/.cache/linux-ci-python/bin/activate"
+          pip install --disable-pip-version-check cmake==3.31.6 ninja==1.13.2 aqtinstall==3.3.0
+          echo "$GITHUB_WORKSPACE/.cache/linux-ci-python/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Qt
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: .cache/qt-linux
+          key: qt-6.8.3-gcc_64-charts
+
+      - name: Install Qt 6.8.3
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          source "$GITHUB_WORKSPACE/.cache/linux-ci-python/bin/activate"
+          python3 -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
+            --outputdir "$GITHUB_WORKSPACE/.cache/qt-linux" --modules qtcharts
+          touch "$GITHUB_WORKSPACE/.cache/qt-linux/6.8.3/gcc_64/.nemyu-install-complete"
+
+      - name: Cache ccache and CPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/cpm
+            .cache/ccache
+          key: ccache-linux-v3-${{ runner.os }}-${{ hashFiles('cpmfile.json') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-v3-${{ runner.os }}-${{ hashFiles('cpmfile.json') }}-
+            ccache-linux-v3-${{ runner.os }}-
+
+      - name: Configure CMake
+        run: |
+          export QT_ROOT_DIR="$GITHUB_WORKSPACE/.cache/qt-linux/6.8.3/gcc_64"
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.cache/ccache"
+          export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_MAXSIZE=5G
+          ccache --zero-stats || true
+
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DYUZU_BUILD_PRESET=v3 \
+            -DBUILD_TESTING=OFF \
+            -DYUZU_TESTS=OFF \
+            -DDYNARMIC_TESTS=OFF \
+            -DENABLE_QT=ON \
+            -DYUZU_CMD=ON \
+            -DYUZU_USE_BUNDLED_QT=OFF \
+            -DYUZU_USE_BUNDLED_SDL3=ON \
+            -DVulkanHeaders_FORCE_BUNDLED=ON \
+            -DVulkanUtilityLibraries_FORCE_BUNDLED=ON \
+            -DSPIRV-Headers_FORCE_BUNDLED=ON \
+            -DBoost_FORCE_BUNDLED=ON \
+            -Dfmt_FORCE_BUNDLED=ON \
+            -Dzstd_FORCE_BUNDLED=ON \
+            -DENABLE_WERROR=OFF \
+            -DUSE_CCACHE=ON \
+            "-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR" \
+            "-DQt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6"
+
+      - name: Build binaries
+        run: |
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.cache/ccache"
+          cmake --build build-linux --target yuzu yuzu-cmd --parallel $(nproc)
+          ccache --show-stats || true
+
+      - name: Package AppImage
+        run: |
+          export QT_ROOT_DIR="$GITHUB_WORKSPACE/.cache/qt-linux/6.8.3/gcc_64"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            export CI_COMMIT_TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          sh tools/linux/package-appimage.sh "$GITHUB_WORKSPACE/build-linux"
+
+      - name: Create archive (tar.gz) and checksums
+        run: |
+          cd out/linux-x86_64
+          APPIMAGE=$(ls *.AppImage | head -n 1)
+          ARCHIVE_NAME="${APPIMAGE%.AppImage}.tar.gz"
+          tar -czvf "$ARCHIVE_NAME" "$APPIMAGE"
+          sha256sum "$APPIMAGE" "$ARCHIVE_NAME" > SHA256SUMS
+          echo "BUILT_APPIMAGE=$APPIMAGE" >> $GITHUB_ENV
+          echo "BUILT_ARCHIVE=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      - name: Upload Artifacts (Branch / Manual / Test builds)
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-appimage
+          path: |
+            out/linux-x86_64/*.AppImage
+            out/linux-x86_64/*.tar.gz
+            out/linux-x86_64/SHA256SUMS
+
+      - name: Publish GitHub Pre-Release (Tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          name: Release ${{ github.ref_name }}
+          body: |
+            Build de teste DeckEmuV2OOT para Steam Deck (x86-64-v3 / AVX2).
+            Contém AppImage e tar.gz com soma de verificação SHA-256.
+          files: |
+            out/linux-x86_64/*.AppImage
+            out/linux-x86_64/*.tar.gz
+            out/linux-x86_64/SHA256SUMS
