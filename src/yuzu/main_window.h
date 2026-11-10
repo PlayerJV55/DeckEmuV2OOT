@@ -1,0 +1,661 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: 2014 Citra Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <memory>
+#include <optional>
+
+#include <filesystem>
+#include <QMainWindow>
+#include <QPointer>
+#include <QMessageBox>
+#include <QFutureWatcher>
+#include <QPushButton>
+#include <QTimer>
+#include <QTranslator>
+#include <qaction.h>
+
+#include "common/common_types.h"
+#include "common/nx2_switches.h"
+#include "common/settings_enums.h"
+#include "core/file_sys/nup_writer.h"
+#include "frontend_common/content_manager.h"
+#include "input_common/drivers/tas_input.h"
+#include "qt_common/config/qt_config.h"
+#include "qt_common/qt_common.h"
+#include "qt_common/util/game.h"
+#include "yuzu/hotkeys.h"
+#include "yuzu/portable_mode.h"
+#include "yuzu/user_data_migration.h"
+
+#ifdef __unix__
+#include <QDBusObjectPath>
+#include <QSocketNotifier>
+#include <QVariant>
+#include <QtDBus/QDBusInterface>
+#endif
+
+#ifdef ENABLE_UPDATE_CHECKER
+#include <QFuture>
+#include <QFutureWatcher>
+#include "frontend_common/update_checker.h"
+#endif
+
+class QtConfig;
+class EmuThread;
+class GameList;
+class GImageInfo;
+class GRenderWindow;
+class LoadingScreen;
+class OverlayDialog;
+class ControllerDialog;
+class QLabel;
+class MultiplayerState;
+class QPushButton;
+class QProgressDialog;
+class NupProgressDialog;
+class ShaderWarmDialog;
+class QSlider;
+class QHBoxLayout;
+class WaitTreeWidget;
+class PerformanceOverlay;
+struct ShaderManagerGame;
+#ifdef HAS_RESHADE
+class ConfigurePostProcessing;
+#endif
+enum class GameListOpenTarget;
+enum class DumpRomFSTarget;
+class GameListPlaceholder;
+
+class QtAmiiboSettingsDialog;
+class QtControllerSelectorDialog;
+class QtProfileSelectionDialog;
+class QtSoftwareKeyboardDialog;
+class QtNXWebEngineView;
+
+namespace VideoCore {
+class ShaderNotify;
+}
+namespace Core {
+enum class SystemResultStatus : u32;
+} // namespace Core
+
+namespace Core::Frontend {
+struct CabinetParameters;
+struct ControllerParameters;
+struct InlineAppearParameters;
+struct InlineTextParameters;
+struct KeyboardInitializeParameters;
+struct ProfileSelectParameters;
+} // namespace Core::Frontend
+
+namespace DiscordRPC {
+class DiscordInterface;
+}
+
+namespace PlayTime {
+class PlayTimeManager;
+}
+
+namespace FileSys {
+class ContentProvider;
+class ManualContentProvider;
+class VfsFilesystem;
+} // namespace FileSys
+
+namespace InputCommon {
+class InputSubsystem;
+}
+
+namespace Service::AM {
+struct FrontendAppletParameters;
+enum class AppletId : u32;
+// this causes errors on debian -> enum class AppletProgramId : u64;
+} // namespace Service::AM
+
+namespace Service::AM::Frontend {
+enum class SwkbdResult : u32;
+enum class SwkbdTextCheckResult : u32;
+enum class SwkbdReplyType : u32;
+enum class WebExitReason : u32;
+} // namespace Service::AM::Frontend
+
+namespace Service::NFC {
+class NfcDevice;
+} // namespace Service::NFC
+
+namespace Service::NFP {
+enum class CabinetMode : u8;
+} // namespace Service::NFP
+
+namespace Ui {
+class MainWindow;
+}
+
+enum class EmulatedDirectoryTarget {
+    NAND,
+    SDMC,
+};
+
+namespace VkDeviceInfo {
+class Record;
+}
+
+class VolumeButton : public QPushButton {
+    Q_OBJECT
+public:
+    explicit VolumeButton(QWidget* parent = nullptr) : QPushButton(parent), scroll_multiplier(1) {
+        connect(&scroll_timer, &QTimer::timeout, this, &VolumeButton::ResetMultiplier);
+    }
+
+signals:
+    void VolumeChanged();
+
+protected:
+    void wheelEvent(QWheelEvent* event) override;
+
+private slots:
+    void ResetMultiplier();
+
+private:
+    int scroll_multiplier;
+    QTimer scroll_timer;
+    constexpr static int MaxMultiplier = 8;
+};
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+
+    /// Max number of recently loaded items to keep track of
+    static const int max_recent_files_item = 10;
+
+public:
+    void filterBarSetChecked(bool state);
+    void UpdateUITheme();
+    explicit MainWindow(bool has_broken_vulkan);
+    ~MainWindow() override;
+
+    bool DropAction(QDropEvent* event);
+    void AcceptDropEvent(QDropEvent* event);
+
+    std::filesystem::path GetShortcutPath(QtCommon::Game::ShortcutTarget target);
+
+signals:
+
+    /**
+     * Signal that is emitted when a new EmuThread has been created and an emulation session is
+     * about to start. At this time, the core system emulation has been initialized, and all
+     * emulation handles and memory should be valid.
+     */
+    void EmulationStarting();
+
+    /**
+     * Signal that is emitted when emulation is about to stop. At this time, the EmuThread and core
+     * system emulation handles and memory are still valid, but are about become invalid.
+     */
+    void EmulationStopping();
+
+    // Signal that tells widgets to update icons to use the current theme
+    void UpdateThemedIcons();
+
+    void UpdateInstallProgress();
+
+    void AmiiboSettingsFinished(bool is_success, const std::string& name);
+
+    void ControllerSelectorReconfigureFinished(bool is_success);
+
+    void ErrorDisplayFinished();
+
+    void ProfileSelectorFinishedSelection(std::optional<Common::UUID> uuid);
+
+    void SoftwareKeyboardSubmitNormalText(Service::AM::Frontend::SwkbdResult result,
+                                          std::u16string submitted_text, bool confirmed);
+    void SoftwareKeyboardSubmitInlineText(Service::AM::Frontend::SwkbdReplyType reply_type,
+                                          std::u16string submitted_text, s32 cursor_position);
+
+    void WebBrowserExtractOfflineRomFS();
+    void WebBrowserClosed(Service::AM::Frontend::WebExitReason exit_reason, std::string last_url);
+
+    void SigInterrupt();
+    void sizeChanged(const QSize& size);
+    void positionChanged(const QPoint& pos);
+    void statsUpdated(const Core::PerfStatsResults& results,
+                      const VideoCore::ShaderNotify& shaders);
+
+public slots:
+    void OnLoadComplete();
+    void OnExecuteProgram(std::size_t program_index);
+    void OnExit();
+    void OnSaveConfig();
+    void AmiiboSettingsShowDialog(const Core::Frontend::CabinetParameters& parameters,
+                                  std::shared_ptr<Service::NFC::NfcDevice> nfp_device);
+    void AmiiboSettingsRequestExit();
+    void ControllerSelectorReconfigureControllers(
+        const Core::Frontend::ControllerParameters& parameters);
+    void ControllerSelectorRequestExit();
+    void SoftwareKeyboardInitialize(
+        bool is_inline, Core::Frontend::KeyboardInitializeParameters initialize_parameters);
+    void SoftwareKeyboardShowNormal();
+    void SoftwareKeyboardShowTextCheck(
+        Service::AM::Frontend::SwkbdTextCheckResult text_check_result,
+        std::u16string text_check_message);
+    void SoftwareKeyboardShowInline(Core::Frontend::InlineAppearParameters appear_parameters);
+    void SoftwareKeyboardHideInline();
+    void SoftwareKeyboardInlineTextChanged(Core::Frontend::InlineTextParameters text_parameters);
+    void SoftwareKeyboardExit();
+    void ErrorDisplayDisplayError(QString error_code, QString error_text);
+    void ErrorDisplayRequestExit();
+    void ProfileSelectorSelectProfile(const Core::Frontend::ProfileSelectParameters& parameters);
+    void ProfileSelectorRequestExit();
+    void WebBrowserOpenWebPage(const std::string& main_url, const std::string& additional_args,
+                               bool is_local);
+    void WebBrowserRequestExit();
+    void OnAppFocusStateChanged(Qt::ApplicationState state);
+    void OnTasStateChanged();
+
+private:
+    /// Updates an action's shortcut and text to reflect an updated hotkey from the hotkey registry.
+    void LinkActionShortcut(QAction* action, const QString& action_name,
+                            const bool tas_allowed = false);
+
+    void InitializeWidgets();
+    void InitializeDebugWidgets();
+    void InitializeRecentFileMenuActions();
+
+    void SetDefaultUIGeometry();
+    void RestoreUIState();
+
+    void ConnectWidgetEvents();
+    void ConnectMenuEvents();
+    void UpdateMenuState();
+
+    void SetupPrepareForSleep();
+
+    void PreventOSSleep();
+    void AllowOSSleep();
+
+    bool LoadROM(const QString& filename, Service::AM::FrontendAppletParameters params);
+    void BootGame(const QString& filename, Service::AM::FrontendAppletParameters params,
+                  StartGameType with_config = StartGameType::Normal);
+    void BootGameFromList(const QString& filename, StartGameType with_config);
+    void ShutdownGame();
+    /// Puts the switch profile of the game into the environment. When it changes switches an
+    /// earlier game of this run already read, offers to restart Nemyu into the game. Returns the
+    /// profile's switches, or nothing if the game must not start now.
+    std::optional<std::vector<Common::Nx2Switch>> ApplyGameSwitchProfile(const QString& filename,
+                                                                         u64 title_id);
+
+    void SetDiscordEnabled(bool state);
+    void LoadAmiibo(const QString& filename);
+    void ClearPendingAmiibo();
+
+    bool SelectAndSetCurrentUser(const Core::Frontend::ProfileSelectParameters& parameters);
+
+    /**
+     * Stores the filename in the recently loaded files list.
+     * The new filename is stored at the beginning of the recently loaded files list.
+     * After inserting the new entry, duplicates are removed meaning that if
+     * this was inserted from \a OnMenuRecentFile(), the entry will be put on top
+     * and remove from its previous position.
+     *
+     * Finally, this function calls \a UpdateRecentFiles() to update the UI.
+     *
+     * @param filename the filename to store
+     */
+    void StoreRecentFile(const QString& filename);
+
+    /**
+     * Updates the recent files menu.
+     * Menu entries are rebuilt from the configuration file.
+     * If there is no entry in the menu, the menu is greyed out.
+     */
+    void UpdateRecentFiles();
+
+    /**
+     * If the emulation is running,
+     * asks the user if he really want to close the emulator
+     *
+     * @return true if the user confirmed
+     */
+    bool ConfirmClose();
+    bool ConfirmChangeGame();
+    bool ConfirmForceLockedExit();
+    void RequestGameExit();
+    void changeEvent(QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+
+    std::string CreateTASFramesString(
+        std::array<size_t, InputCommon::TasInput::PLAYER_NUMBER> frames) const;
+
+#ifdef __unix__
+    void SetupSigInterrupts();
+    static void HandleSigInterrupt(int);
+    void OnSigInterruptNotifierActivated();
+#endif
+    void SetGamemodeEnabled(bool state);
+
+    Service::AM::FrontendAppletParameters ApplicationAppletParameters();
+    Service::AM::FrontendAppletParameters LibraryAppletParameters(u64 program_id,
+                                                                  Service::AM::AppletId applet_id);
+
+private slots:
+    void OnStartGame();
+    void OnRestartGame();
+    void OnPauseGame();
+    void OnPauseContinueGame();
+    void OnStopGame();
+    void OnPrepareForSleep(bool prepare_sleep);
+    void OnMenuReportCompatibility();
+    void OnOpenModsPage();
+    void OnOpenUserHandbook();
+
+    /// Called whenever a user selects a game in the game list widget.
+    void OnGameListLoadFile(QString game_path, u64 program_id);
+    void OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
+                              const std::string& game_path);
+    void OnGameListRemoveInstalledEntry(u64 program_id, QtCommon::Game::InstalledEntryType type);
+    void OnGameListRemoveFile(u64 program_id, QtCommon::Game::GameListRemoveTarget target,
+                              const std::string& game_path);
+    void OnGameListRemovePlayTimeData(u64 program_id);
+    void OnGameListSetPlayTime(u64 program_id);
+    void OnGameListDumpRomFS(u64 program_id, const std::string& game_path, DumpRomFSTarget target);
+    void OnGameListVerifyIntegrity(const std::string& game_path);
+    void OnGameListConvertToNup(const std::string& game_path);
+    void OnGameListPrepareShaderWarm(u64 program_id, const std::string& game_path);
+    void OnGameListDeleteShaderWarm(u64 program_id);
+    void OnGameListExtractNup(const std::string& game_path);
+    void OnGameListEditNupMetadata(const std::string& game_path);
+    void OnGameListCopyTID(u64 program_id);
+    void OnGameListCreateShortcut(u64 program_id, const std::string& game_path,
+                                  const QtCommon::Game::ShortcutTarget target);
+    void OnGameListOpenDirectory(const QString& directory);
+    void OnGameListAddDirectory();
+    void OnGameListShowList(bool show);
+    void OnGameListOpenPerGameProperties(const std::string& file);
+    void OnLinkToRyujinx(const u64& program_id);
+    void OnMenuLoadFile();
+    void OnMenuLoadFolder();
+    void OnMenuConvertDumpToNup();
+    void OnMenuDumpNup();
+    void OnMenuEditNupMetadata();
+    std::vector<ShaderManagerGame> ListedGames() const;
+    void OpenShaderManager(u64 program_id);
+    void OpenSaveManager(u64 program_id);
+    void IncrementInstallProgress();
+    void OnMenuInstallToNAND();
+    void OnMenuRecentFile();
+    void OnConfigure();
+    void OnConfigureTas();
+    void OnDecreaseVolume();
+    void OnIncreaseVolume();
+    void OnMute();
+    void OnTasStartStop();
+    void OnTasRecord();
+    void OnTasReset();
+    void OnToggleGraphicsAPI();
+    void OnToggleDockedMode();
+    void OnToggleGpuAccuracy();
+    void OnToggleAdaptingFilter();
+    void OnConfigurePerGame();
+    void OnLoadAmiibo();
+    void OnOpenRootDataFolder();
+    void OnOpenNANDFolder();
+    void OnOpenSDMCFolder();
+    void OnOpenModFolder();
+    void OnOpenLogFolder();
+    void OnPortableMode();
+    void OnVerifyInstalledContents();
+    void OnInstallFirmware();
+    void OnInstallFirmwareFromZIP();
+    void OnInstallDecryptionKeys();
+    void OnAbout();
+    void OnEdenDependencies();
+    void OnDataDialog();
+    void OnToggleFilterBar();
+    void OnToggleStatusBar();
+    void OnTogglePerfOverlay();
+#ifdef HAS_RESHADE
+    void OnPostProcessingShaders();
+#endif
+    void OnGameListRefresh();
+    void InitializeHotkeys();
+    void ToggleFullscreen();
+    bool UsingExclusiveFullscreen();
+    void ShowFullscreen();
+    void HideFullscreen();
+    void ToggleWindowMode();
+    void ResetWindowSize(u32 width, u32 height);
+    void ResetWindowSize720();
+    void ResetWindowSize900();
+    void ResetWindowSize1080();
+
+    void SetGameListMode(Settings::GameListMode mode);
+    void SetGridView();
+    void SetTreeView();
+    void SetCarouselView();
+
+    void CheckIconSize();
+    void ToggleShowGameName();
+
+    void LaunchFirmwareApplet(u64 program_id, std::optional<Service::NFP::CabinetMode> mode);
+    void OnCreateHomeMenuDesktopShortcut();
+    void OnCreateHomeMenuApplicationMenuShortcut();
+    void OnCaptureScreenshot();
+    /// Checks for decryption keys; `prompt` asks to install them when they are missing.
+    void OnCheckFirmwareDecryption(bool prompt = true);
+#ifdef __unix__
+    void OnCheckGraphicsBackend();
+#endif
+    void OnLanguageChanged(const QString& locale);
+    void OnMouseActivity();
+    bool OnShutdownBegin();
+    void ShowClosingScreen();
+    void OnEmulationStopped();
+    void OnEmulationStopTimeExpired();
+
+#ifdef ENABLE_UPDATE_CHECKER
+    void OnCheckForUpdates();
+    void OnEmulatorUpdateAvailable();
+#endif
+
+private:
+    void RemovePlayTimeData(u64 program_id);
+    void ConvertDumpToNup(const std::filesystem::path& root, const std::string& game_path);
+    bool SelectRomFSDumpTarget(const FileSys::ContentProvider&, u64 program_id,
+                               u64* selected_title_id, u8* selected_content_record_type);
+    ContentManager::InstallResult InstallNCA(const QString& filename);
+    void UpdateWindowTitle(std::string_view title_name = {}, std::string_view title_version = {},
+                           std::string_view gpu_vendor = {});
+    void OnApplicationChanged(u64 program_id);
+    void UpdateDockedButton();
+    void UpdateAPIText();
+    void UpdateFilterText();
+    void UpdateAAText();
+    void UpdatePostShaderText();
+    void UpdateVolumeUI();
+    void UpdateStatusBar();
+    void UpdateGPUAccuracyButton();
+    void UpdateStatusButtons();
+    void UpdateUISettings();
+    void UpdateInputDrivers();
+    void HideMouseCursor();
+    void ShowMouseCursor();
+    void OpenURL(const QUrl& url);
+    void LoadTranslation();
+    void OpenPerGameConfiguration(u64 title_id, const std::string& file_name);
+    bool CheckFirmwarePresence();
+    void SetFirmwareVersion();
+    void SetFPSSuffix();
+    /**
+     * Open (or not) the right confirm dialog based on current setting and game exit lock
+     * @returns true if the player confirmed or the settings do no require it
+     */
+    bool ConfirmShutdownGame();
+
+    /// Notes low commit memory for a Switch 2 game in the status bar, and once per session in a
+    /// window that does not hold the boot
+    void WarnLowVirtualMemory();
+
+    QString GetTasStateDescription() const;
+    bool CreateShortcutMessagesGUI(QWidget* parent, int imsg, const QString& game_title);
+
+    /**
+     * Mimic the behavior of QMessageBox::question but link controller navigation to the dialog
+     * The only difference is that it returns a boolean.
+     *
+     * @returns true if buttons contains QMessageBox::Yes and the user clicks on the "Yes" button.
+     */
+    bool question(QWidget* parent, const QString& title, const QString& text,
+                  QMessageBox::StandardButtons buttons =
+                      QMessageBox::StandardButtons(QMessageBox::Yes | QMessageBox::No),
+                  QMessageBox::StandardButton defaultButton = QMessageBox::NoButton);
+
+    std::unique_ptr<Ui::MainWindow> ui;
+
+    std::unique_ptr<DiscordRPC::DiscordInterface> discord_rpc;
+    std::unique_ptr<PlayTime::PlayTimeManager> play_time_manager;
+    std::shared_ptr<InputCommon::InputSubsystem> input_subsystem;
+
+#ifdef ENABLE_UPDATE_CHECKER
+    QFuture<UpdateChecker::CheckResult> update_future;
+    QFutureWatcher<UpdateChecker::CheckResult> update_watcher;
+    bool manual_update_check = false;
+#endif
+
+    /// Run after closing: a portable mode change, or a game started again with its switch profile.
+    std::optional<PortableMode::Restart> pending_restart;
+    /// The switch profile of the first game of this run, whose values the switches read once per
+    /// run took. Nothing until a game has started.
+    std::optional<std::vector<Common::Nx2Switch>> first_game_switches;
+
+    MultiplayerState* multiplayer_state = nullptr;
+
+    GRenderWindow* render_window = nullptr;
+    GameList* game_list = nullptr;
+    LoadingScreen* loading_screen = nullptr;
+    QTimer shutdown_timer;
+    PerformanceOverlay* perf_overlay = nullptr;
+#ifdef HAS_RESHADE
+    ConfigurePostProcessing* post_processing_dialog = nullptr;
+#endif
+
+    GameListPlaceholder* game_list_placeholder = nullptr;
+
+    std::vector<VkDeviceInfo::Record> vk_device_records;
+
+    // Status bar elements
+    QLabel* message_label = nullptr;
+    QLabel* shader_warm_label = nullptr;
+    QLabel* shader_building_label = nullptr;
+    QLabel* res_scale_label = nullptr;
+    QLabel* emu_speed_label = nullptr;
+    QLabel* game_fps_label = nullptr;
+    QLabel* emu_frametime_label = nullptr;
+    QLabel* tas_label = nullptr;
+    QLabel* firmware_label = nullptr;
+    QPushButton* gpu_accuracy_button = nullptr;
+    QPushButton* renderer_status_button = nullptr;
+    QPushButton* refresh_button = nullptr;
+    QPushButton* dock_status_button = nullptr;
+    QPushButton* filter_status_button = nullptr;
+    QPushButton* aa_status_button = nullptr;
+    QPushButton* post_shader_status_button = nullptr;
+    VolumeButton* volume_button = nullptr;
+    QWidget* volume_popup = nullptr;
+    QSlider* volume_slider = nullptr;
+    QTimer status_bar_update_timer;
+
+    // Stores what suffix to add to the FPS counter, e.g. Unlocked.
+    QString m_fpsSuffix{};
+
+    UserDataMigrator user_data_migrator;
+    std::unique_ptr<QtConfig> config;
+
+    // Whether emulation is currently running in yuzu.
+    bool emulation_running = false;
+    // Whether a stop showing the closing screen is underway
+    bool emulation_stopping = false;
+    // The path to the game currently running
+    QString current_game_path;
+    // Whether a user was set on the command line (skips UserSelector if it's forced to show up)
+    bool user_flag_cmd_line = false;
+
+    bool auto_paused = false;
+    bool auto_muted = false;
+#ifdef __APPLE__
+    u32 sleep_assertion_id = 0;
+#endif
+    QTimer mouse_hide_timer;
+    QTimer update_input_timer;
+
+    QString startup_icon_theme;
+
+    QActionGroup* game_size_actions;
+
+    // Debugger panes
+    ControllerDialog* controller_dialog = nullptr;
+
+    QAction* actions_recent_files[max_recent_files_item];
+
+    // stores default icon theme search paths for the platform
+    QStringList default_theme_paths;
+
+    HotkeyRegistry hotkey_registry;
+
+    QTranslator translator;
+
+    // Install progress dialog
+    QProgressDialog* install_progress = nullptr;
+    NupProgressDialog* nup_progress = nullptr;
+    QFutureWatcher<FileSys::Nup::PackResult> nup_watcher;
+    std::shared_ptr<std::atomic_bool> nup_cancel;
+    bool nup_running{};
+    QPointer<ShaderWarmDialog> shader_warm_dialog;
+    std::string nup_source_path;
+
+    // Last game booted, used for multi-process apps
+    QString last_filename_booted;
+
+    // Applets
+    QtAmiiboSettingsDialog* cabinet_applet = nullptr;
+    QtControllerSelectorDialog* controller_applet = nullptr;
+    QtProfileSelectionDialog* profile_select_applet = nullptr;
+    QDialog* error_applet = nullptr;
+    QtSoftwareKeyboardDialog* software_keyboard = nullptr;
+    QtNXWebEngineView* web_applet = nullptr;
+
+    // True if amiibo file select is visible
+    bool is_amiibo_file_select_active{};
+
+    // Amiibo chosen before the game started scanning, loaded as soon as it does
+    QString pending_amiibo;
+    QTimer pending_amiibo_timer;
+
+    // True if load file select is visible
+    bool is_load_file_select_active{};
+
+    // True if TAS recording dialog is visible
+    bool is_tas_recording_dialog_active{};
+
+#ifdef __unix__
+    QSocketNotifier* sig_interrupt_notifier;
+    static std::array<int, 3> sig_interrupt_fds;
+#endif
+
+    std::filesystem::path GetEdenCommand();
+
+    void CreateShortcut(const std::string& game_path, const u64 program_id,
+                        const std::string& game_title, QtCommon::Game::ShortcutTarget target,
+                        std::string arguments, const bool needs_title);
+
+protected:
+    void dropEvent(QDropEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+};

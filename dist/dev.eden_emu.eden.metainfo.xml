@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+SPDX-FileCopyrightText: 2025 Eden Emulator Project
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+<!--
+SPDX-FileCopyrightText: 2021 yuzu Emulator Project
+SPDX-License-Identifier: CC0-1.0
+-->
+
+<component type="desktop-application">
+  <id>io.gitlab.nemyu_emulator.nemyu</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Nemyu</name>
+  <summary>Nintendo Switch emulator</summary>
+  <description>
+    <p>Nemyu is a free and open-source (FOSS) Switch 2 emulator, written in C++.</p>
+  </description>
+  <categories>
+    <category>Game</category>
+    <category>Emulator</category>
+  </categories>
+  <keywords>
+    <keyword>switch</keyword>
+    <keyword>emulator</keyword>
+  </keywords>
+  <url type="homepage">https://gitlab.com/nemyu-emulator/nemyu</url>
+  <url type="bugtracker">https://gitlab.com/nemyu-emulator/nemyu/-/issues</url>
+  <url type="help">https://gitlab.com/nemyu-emulator/nemyu/-/blob/nemyu/docs/user/README.md</url>
+  <url type="vcs-browser">https://gitlab.com/nemyu-emulator/nemyu</url>
+  <url type="contribute">https://gitlab.com/nemyu-emulator/nemyu/-/blob/nemyu/CONTRIBUTING.md</url>
+  <launchable type="desktop-id">io.gitlab.nemyu_emulator.nemyu.desktop</launchable>
+  <provides>
+    <binary>nemyu</binary>
+    <binary>nemyu-cli</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+    <internet>offline-only</internet>
+  </supports>
+  <requires>
+    <memory>8192</memory>
+  </requires>
+  <recommends>
+    <memory>16384</memory>
+  </recommends>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer_name>Nemyu</developer_name>
+  <content_rating type="oars-1.0"/>
+</component>

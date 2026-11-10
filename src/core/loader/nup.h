@@ -1,0 +1,87 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+
+#include "core/file_sys/nup_container.h"
+#include "core/file_sys/patch_manager.h"
+#include "core/loader/loader.h"
+
+namespace FileSys {
+class NACP;
+class NupContainer;
+} // namespace FileSys
+
+namespace Loader {
+
+/// Loads a NUP (NX Package) container: loose ExeFS/RomFS trees for a base
+/// program plus its updates in one file. The newest update package is layered
+/// over the base; add-on content packages are served to the program as its add-on content.
+class AppLoader_NUP final : public AppLoader {
+public:
+    explicit AppLoader_NUP(FileSys::VirtualFile file_);
+    ~AppLoader_NUP() override;
+
+    /**
+     * Identifies whether or not the given file is a NUP container.
+     *
+     * @param nup_file The file to identify.
+     *
+     * @return FileType::NUP, or FileType::Error if the file is not a NUP.
+     */
+    static FileType IdentifyType(const FileSys::VirtualFile& nup_file);
+
+    FileType GetFileType() const override {
+        return FileType::NUP;
+    }
+
+    LoadResult Load(Kernel::KProcess& process, Core::System& system) override;
+
+    ResultStatus VerifyIntegrity(std::function<bool(size_t, size_t)> progress_callback) override;
+
+    ResultStatus ReadRomFS(FileSys::VirtualFile& out_file) override;
+    bool IsRomFSUpdatable() const override;
+    ResultStatus ReadProgramId(u64& out_program_id) override;
+    ResultStatus ReadProgramIds(std::vector<u64>& out_program_ids) override;
+    ResultStatus ReadIcon(std::vector<u8>& buffer) override;
+    ResultStatus ReadTitle(std::string& title) override;
+    ResultStatus ReadControlData(FileSys::NACP& control) override;
+    ResultStatus ReadNSOModules(Modules& modules) override;
+    ResultStatus ReadAddOnTitleIds(std::vector<u64>& out_title_ids) override;
+    ResultStatus ReadAddOnRomFS(u64 title_id, FileSys::VirtualFile& out_file) override;
+
+    /// The update and the add-on content the container carries, as a game's add-ons list them.
+    /// Turning "Update" off boots the base; turning "DLC" off hides the add-on content.
+    std::vector<FileSys::Patch> GetCarriedPatches() const;
+
+    /// Whether the container holds an update and no base, the whole game in one update package
+    bool IsUpdateOnly() const {
+        return has_program && !nup->FindBasePackage().has_value();
+    }
+
+private:
+    std::unique_ptr<FileSys::NupContainer> nup;
+    /// Companion base container for update-only (standalone_update) files.
+    std::unique_ptr<FileSys::NupContainer> base_nup;
+    std::optional<std::size_t> base_nup_index;
+    /// The update package the program runs with, unless it is turned off in the add-ons
+    std::optional<std::size_t> selected_update_index;
+    std::unique_ptr<AppLoader> secondary_loader;
+
+    std::unique_ptr<FileSys::NACP> nacp_file;
+    FileSys::VirtualFile icon_file;
+    u64 base_title_id{};
+    std::string display_version;
+    bool has_program{};
+    /// Add-on RomFS images built so far, by title id; filled from the filesystem service threads
+    std::map<u64, FileSys::VirtualFile> addon_romfs;
+    std::mutex addon_romfs_mutex;
+};
+
+} // namespace Loader

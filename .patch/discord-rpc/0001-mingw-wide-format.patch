@@ -1,0 +1,45 @@
+Use %ls for wide string arguments
+
+MinGW builds use the mingw printf, which reads %s as a narrow string in
+wide functions, so the protocol registration wrote truncated registry keys.
+%ls means a wide string on both MSVC and MinGW.
+
+--- a/src/discord_register_win.cpp
++++ b/src/discord_register_win.cpp
+@@ -78,22 +78,22 @@
+     wchar_t openCommand[1024];
+
+     if (command && command[0]) {
+-        StringCbPrintfW(openCommand, sizeof(openCommand), L"%s", command);
++        StringCbPrintfW(openCommand, sizeof(openCommand), L"%ls", command);
+     }
+     else {
+         // StringCbCopyW(openCommand, sizeof(openCommand), exeFilePath);
+-        StringCbPrintfW(openCommand, sizeof(openCommand), L"%s", exeFilePath);
++        StringCbPrintfW(openCommand, sizeof(openCommand), L"%ls", exeFilePath);
+     }
+
+     wchar_t protocolName[64];
+-    StringCbPrintfW(protocolName, sizeof(protocolName), L"discord-%s", applicationId);
++    StringCbPrintfW(protocolName, sizeof(protocolName), L"discord-%ls", applicationId);
+     wchar_t protocolDescription[128];
+     StringCbPrintfW(
+-      protocolDescription, sizeof(protocolDescription), L"URL:Run game %s protocol", applicationId);
++      protocolDescription, sizeof(protocolDescription), L"URL:Run game %ls protocol", applicationId);
+     wchar_t urlProtocol = 0;
+
+     wchar_t keyName[256];
+-    StringCbPrintfW(keyName, sizeof(keyName), L"Software\\Classes\\%s", protocolName);
++    StringCbPrintfW(keyName, sizeof(keyName), L"Software\\Classes\\%ls", protocolName);
+     HKEY key;
+     auto status =
+       RegCreateKeyExW(HKEY_CURRENT_USER, keyName, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
+@@ -180,7 +180,7 @@
+     }
+
+     wchar_t command[1024];
+-    StringCbPrintfW(command, sizeof(command), L"\"%s\" steam://rungameid/%s", steamPath, wSteamId);
++    StringCbPrintfW(command, sizeof(command), L"\"%ls\" steam://rungameid/%ls", steamPath, wSteamId);
+
+     Discord_RegisterW(appId, command);
+ }
